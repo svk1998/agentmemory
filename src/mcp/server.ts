@@ -138,11 +138,16 @@ export function registerMcpEndpoints(
                 body: { error: "token_budget must be a positive integer" },
               };
             }
+            const project =
+              typeof args.project === "string" && args.project.trim()
+                ? args.project.trim()
+                : undefined;
             const result = await sdk.trigger({ function_id: "mem::search", payload: {
               query: args.query,
               limit: typeof args.limit === "number" ? args.limit : 10,
               format,
               token_budget: tokenBudget,
+              project,
             } });
             const text =
               format === "narrative" &&
@@ -289,12 +294,17 @@ export function registerMcpEndpoints(
             }
             const expandIds = parseCsvList(args.expandIds).slice(0, 20);
             const limit = Math.max(1, Math.min(100, asNumber(args.limit, 10) ?? 10));
+            const project =
+              typeof args.project === "string" && args.project.trim()
+                ? args.project.trim()
+                : undefined;
             const result = await sdk.trigger({
               function_id: "mem::smart-search",
               payload: {
                 query: args.query,
                 expandIds,
                 limit,
+                project,
               },
             });
             return {

@@ -102,6 +102,7 @@ interface Validated {
   limit?: number;
   format?: string;
   tokenBudget?: number;
+  project?: string;
   memoryIds?: string[];
   reason?: string;
 }
@@ -142,6 +143,8 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
         const n = Number(budget);
         if (Number.isFinite(n) && n > 0) v.tokenBudget = Math.floor(n);
       }
+      const proj = args["project"];
+      if (typeof proj === "string" && proj.trim()) v.project = proj.trim();
       return v;
     }
     case "memory_sessions": {
@@ -190,6 +193,7 @@ async function handleProxy(
         format: v.format ?? "full",
       };
       if (v.tokenBudget != null) body["token_budget"] = v.tokenBudget;
+      if (v.project) body["project"] = v.project;
       const result = await handle.call("/agentmemory/search", {
         method: "POST",
         body: JSON.stringify(body),
@@ -200,6 +204,7 @@ async function handleProxy(
       const body: Record<string, unknown> = { query: v.query, limit: v.limit };
       if (v.format != null) body["format"] = v.format;
       if (v.tokenBudget != null) body["token_budget"] = v.tokenBudget;
+      if (v.project) body["project"] = v.project;
       const result = await handle.call("/agentmemory/smart-search", {
         method: "POST",
         body: JSON.stringify(body),

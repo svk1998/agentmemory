@@ -32,6 +32,14 @@ export const CORE_TOOLS: McpToolDef[] = [
           type: "number",
           description: "Optional token budget to trim returned results",
         },
+        project: {
+          type: "string",
+          description:
+            "Optional: scope recall to a project. Pass the same stable canonical " +
+            "project identifier used at memory_save / session start (a slug, UUID, " +
+            "or registry key — not a filesystem path). Results are limited to that " +
+            "project plus any untagged/global memories. Omit for global recall.",
+        },
       },
       required: ["query"],
     },
@@ -130,6 +138,14 @@ export const CORE_TOOLS: McpToolDef[] = [
           description: "Comma-separated observation IDs to expand",
         },
         limit: { type: "number", description: "Max results (default 10)" },
+        project: {
+          type: "string",
+          description:
+            "Optional: scope results to a project. Pass the same stable canonical " +
+            "project identifier used at memory_save / session start (a slug, UUID, " +
+            "or registry key — not a filesystem path). Results are limited to that " +
+            "project plus any untagged/global memories. Omit for global search.",
+        },
       },
       required: ["query"],
     },
