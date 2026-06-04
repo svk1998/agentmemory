@@ -10,6 +10,9 @@ import type {
 } from "../types.js";
 import { getVisibleTools } from "./tools-registry.js";
 import { timingSafeCompare } from "../auth.js";
+import { VERSION } from "../version.js";
+import { dispatchMessage, RpcError, type JsonRpcResponse } from "./transport.js";
+import { createMcpMethodRouter } from "./mcp-methods.js";
 
 type McpResponse = {
   status_code: number;
@@ -25,6 +28,17 @@ function asNumber(value: unknown, fallback?: number): number | undefined {
   const n = Number(value);
   if (Number.isFinite(n)) return n;
   return fallback;
+}
+
+// Map an internal REST status code onto the closest JSON-RPC error code for
+// the Streamable HTTP transport. Tool execution errors don't pass through
+// here — they're returned as isError results — so this only covers
+// resource/prompt/list failures.
+function statusToRpcCode(status: number): number {
+  if (status === 400) return -32602; // Invalid params
+  if (status === 401) return -32600; // Invalid Request (unauthorized)
+  if (status === 404) return -32601; // Method/resource not found
+  return -32603; // Internal error
 }
 
 function parseCsvList(value: unknown): string[] {
@@ -57,7 +71,19 @@ export function registerMcpEndpoints(
     return null;
   }
 
-  sdk.registerFunction("mcp::tools::list", 
+  // Capture handler references as they register so the Streamable HTTP
+  // endpoint below can reuse the exact same logic (no duplicated dispatch).
+  type McpHandler = (req: ApiRequest<never>) => Promise<McpResponse>;
+  const handlers = new Map<string, McpHandler>();
+  function register<T>(
+    id: string,
+    handler: (req: ApiRequest<T>) => Promise<McpResponse>,
+  ): void {
+    handlers.set(id, handler as McpHandler);
+    sdk.registerFunction(id, handler as never);
+  }
+
+  register("mcp::tools::list",
     async (req: ApiRequest): Promise<McpResponse> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -70,7 +96,7 @@ export function registerMcpEndpoints(
     config: { api_path: "/agentmemory/mcp/tools", http_method: "GET" },
   });
 
-  sdk.registerFunction("mcp::tools::call", 
+  register("mcp::tools::call",
     async (
       req: ApiRequest<{ name: string; arguments: Record<string, unknown> }>,
     ): Promise<McpResponse> => {
@@ -1309,7 +1335,7 @@ export function registerMcpEndpoints(
     },
   ];
 
-  sdk.registerFunction("mcp::resources::list", 
+  register("mcp::resources::list",
     async (req: ApiRequest): Promise<McpResponse> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -1322,7 +1348,7 @@ export function registerMcpEndpoints(
     config: { api_path: "/agentmemory/mcp/resources", http_method: "GET" },
   });
 
-  sdk.registerFunction("mcp::resources::read", 
+  register("mcp::resources::read",
     async (req: ApiRequest<{ uri: string }>): Promise<McpResponse> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -1595,7 +1621,7 @@ export function registerMcpEndpoints(
     },
   ];
 
-  sdk.registerFunction("mcp::prompts::list", 
+  register("mcp::prompts::list",
     async (req: ApiRequest): Promise<McpResponse> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -1608,7 +1634,7 @@ export function registerMcpEndpoints(
     config: { api_path: "/agentmemory/mcp/prompts", http_method: "GET" },
   });
 
-  sdk.registerFunction("mcp::prompts::get", 
+  register("mcp::prompts::get",
     async (
       req: ApiRequest<{ name: string; arguments?: Record<string, string> }>,
     ): Promise<McpResponse> => {
@@ -1732,5 +1758,108 @@ export function registerMcpEndpoints(
     type: "http",
     function_id: "mcp::prompts::get",
     config: { api_path: "/agentmemory/mcp/prompts/get", http_method: "POST" },
+  });
+
+  // ---- Streamable HTTP MCP transport (JSON-only) ------------------------
+  // A single endpoint speaking MCP JSON-RPC over HTTP, reusing the REST
+  // tool/resource/prompt handlers above so there's no duplicated dispatch.
+  // The spec permits answering POST with application/json instead of an SSE
+  // stream; this is that mode. Hosts that don't use it simply never POST here.
+  const SERVER_INFO = {
+    name: "agentmemory",
+    version: VERSION,
+    protocolVersion: "2024-11-05",
+  };
+
+  // Invoke a captured REST handler with a synthetic ApiRequest. The outer
+  // /mcp handler authenticates once, then forwards its Authorization header
+  // so each inner handler's own checkAuth passes when a secret is set.
+  function invokeHandler(
+    id: string,
+    body: unknown,
+    authHeader: string | undefined,
+  ): Promise<McpResponse> {
+    const handler = handlers.get(id);
+    if (!handler) {
+      return Promise.resolve({
+        status_code: 500,
+        body: { error: `missing handler: ${id}` },
+      });
+    }
+    const req = {
+      body,
+      headers: authHeader ? { authorization: authHeader } : {},
+      query_params: {},
+    } as unknown as ApiRequest<never>;
+    return handler(req);
+  }
+
+  function buildRouter(authHeader: string | undefined) {
+    const unwrap = async (id: string, body: unknown): Promise<unknown> => {
+      const res = await invokeHandler(id, body, authHeader);
+      if (res.status_code === 200) return res.body;
+      const message =
+        (res.body as { error?: string } | undefined)?.error ??
+        `request failed (${res.status_code})`;
+      throw new RpcError(statusToRpcCode(res.status_code), message);
+    };
+    return createMcpMethodRouter({
+      serverInfo: SERVER_INFO,
+      listTools: () => unwrap("mcp::tools::list", undefined),
+      callTool: async (name, args) => {
+        // Tool execution failures go back to the model as an isError result
+        // (MCP convention), not as a JSON-RPC protocol error.
+        const res = await invokeHandler(
+          "mcp::tools::call",
+          { name, arguments: args },
+          authHeader,
+        );
+        if (res.status_code === 200) return res.body;
+        const message =
+          (res.body as { error?: string } | undefined)?.error ??
+          `tool call failed (${res.status_code})`;
+        return {
+          content: [{ type: "text", text: `Error: ${message}` }],
+          isError: true,
+        };
+      },
+      listResources: () => unwrap("mcp::resources::list", undefined),
+      readResource: (uri) => unwrap("mcp::resources::read", { uri }),
+      listPrompts: () => unwrap("mcp::prompts::list", undefined),
+      getPrompt: (name, args) =>
+        unwrap("mcp::prompts::get", { name, arguments: args }),
+    });
+  }
+
+  sdk.registerFunction("mcp::streamable",
+    async (req: ApiRequest): Promise<McpResponse> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const rawAuth =
+        req.headers?.["authorization"] || req.headers?.["Authorization"];
+      const authHeader = typeof rawAuth === "string" ? rawAuth : undefined;
+      const router = buildRouter(authHeader);
+      const jsonHeaders = { "Content-Type": "application/json" };
+
+      const body = req.body;
+      if (Array.isArray(body)) {
+        const responses: JsonRpcResponse[] = [];
+        for (const msg of body) {
+          const r = await dispatchMessage(msg, router);
+          if (r) responses.push(r);
+        }
+        if (responses.length === 0) return { status_code: 202, body: "" };
+        return { status_code: 200, headers: jsonHeaders, body: responses };
+      }
+
+      const response = await dispatchMessage(body, router);
+      if (!response) return { status_code: 202, body: "" };
+      return { status_code: 200, headers: jsonHeaders, body: response };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "mcp::streamable",
+    config: { api_path: "/agentmemory/mcp", http_method: "POST" },
   });
 }

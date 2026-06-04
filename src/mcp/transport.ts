@@ -17,6 +17,20 @@ export type RequestHandler = (
   params: Record<string, unknown>,
 ) => Promise<unknown>;
 
+// A handler may throw an RpcError to control the JSON-RPC error code it
+// surfaces (e.g. -32601 Method not found, -32602 Invalid params). Any other
+// thrown value maps to -32603 Internal error.
+export class RpcError extends Error {
+  readonly code: number;
+  readonly data?: unknown;
+  constructor(code: number, message: string, data?: unknown) {
+    super(message);
+    this.name = "RpcError";
+    this.code = code;
+    this.data = data;
+  }
+}
+
 export interface StdioMessageParser {
   push: (chunk: Buffer | string) => void;
   isFramed: () => boolean;
@@ -44,6 +58,89 @@ function isValidId(id: unknown): id is string | number | null | undefined {
   );
 }
 
+// Dispatches an already-parsed JSON-RPC value: validates the envelope, runs
+// the handler, and returns the response to send — or `null` when nothing
+// should be sent (notifications, and malformed messages we can't safely echo
+// an id for). Transport-neutral: stdio's processLine parses a line then calls
+// this; the HTTP transport hands its parsed body straight in.
+export async function dispatchMessage(
+  parsed: unknown,
+  handler: RequestHandler,
+  writeErr: (msg: string) => void = (msg) => process.stderr.write(msg),
+): Promise<JsonRpcResponse | null> {
+  const request = parsed as JsonRpcRequest;
+  const rawId = (request as { id?: unknown } | null)?.id;
+
+  // Invalid request shape (missing/wrong jsonrpc, non-string method).
+  if (
+    !request ||
+    typeof request !== "object" ||
+    request.jsonrpc !== "2.0" ||
+    typeof request.method !== "string"
+  ) {
+    // Echo the id back only if it's a valid string/number. Notifications
+    // (missing/null id) and malformed ids both drop silently — we don't
+    // want to respond to something that could be a notification, and we
+    // can't invent an id for a malformed one.
+    if (typeof rawId === "string" || typeof rawId === "number") {
+      return {
+        jsonrpc: "2.0",
+        id: rawId,
+        error: { code: -32600, message: "Invalid Request" },
+      };
+    }
+    return null;
+  }
+
+  // Request shape is valid but id may still be of the wrong type
+  // (object, array, boolean). Per the spec, that's an Invalid Request.
+  // Respond with id: null because we can't safely echo a non-JSON-RPC id.
+  if (!isValidId(rawId)) {
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32600,
+        message: "Invalid Request: id must be string, number, or null",
+      },
+    };
+  }
+
+  const notification = isNotification(request);
+
+  try {
+    const result = await handler(request.method, request.params || {});
+    if (notification) return null;
+    return {
+      jsonrpc: "2.0",
+      id: request.id as string | number,
+      result,
+    };
+  } catch (err) {
+    if (notification) {
+      writeErr(
+        `[mcp-transport] notification handler error for ${request.method}: ${
+          err instanceof Error ? err.message : String(err)
+        }\n`,
+      );
+      return null;
+    }
+    const code = err instanceof RpcError ? err.code : -32603;
+    const error: JsonRpcResponse["error"] = {
+      code,
+      message: err instanceof Error ? err.message : String(err),
+    };
+    if (err instanceof RpcError && err.data !== undefined) {
+      error.data = err.data;
+    }
+    return {
+      jsonrpc: "2.0",
+      id: request.id as string | number,
+      error,
+    };
+  }
+}
+
 // Exported for unit tests so the line-handling logic is exercised
 // independently of process.stdin / process.stdout.
 export async function processLine(
@@ -67,70 +164,8 @@ export async function processLine(
     return;
   }
 
-  const request = parsed as JsonRpcRequest;
-  const rawId = (request as { id?: unknown } | null)?.id;
-
-  // Invalid request shape (missing/wrong jsonrpc, non-string method).
-  if (
-    !request ||
-    typeof request !== "object" ||
-    request.jsonrpc !== "2.0" ||
-    typeof request.method !== "string"
-  ) {
-    // Echo the id back only if it's a valid string/number. Notifications
-    // (missing/null id) and malformed ids both drop silently — we don't
-    // want to respond to something that could be a notification, and we
-    // can't invent an id for a malformed one.
-    if (typeof rawId === "string" || typeof rawId === "number") {
-      writeOut({
-        jsonrpc: "2.0",
-        id: rawId,
-        error: { code: -32600, message: "Invalid Request" },
-      });
-    }
-    return;
-  }
-
-  // Request shape is valid but id may still be of the wrong type
-  // (object, array, boolean). Per the spec, that's an Invalid Request.
-  // Respond with id: null because we can't safely echo a non-JSON-RPC id.
-  if (!isValidId(rawId)) {
-    writeOut({
-      jsonrpc: "2.0",
-      id: null,
-      error: { code: -32600, message: "Invalid Request: id must be string, number, or null" },
-    });
-    return;
-  }
-
-  const notification = isNotification(request);
-
-  try {
-    const result = await handler(request.method, request.params || {});
-    if (notification) return;
-    writeOut({
-      jsonrpc: "2.0",
-      id: request.id as string | number,
-      result,
-    });
-  } catch (err) {
-    if (notification) {
-      writeErr(
-        `[mcp-transport] notification handler error for ${request.method}: ${
-          err instanceof Error ? err.message : String(err)
-        }\n`,
-      );
-      return;
-    }
-    writeOut({
-      jsonrpc: "2.0",
-      id: request.id as string | number,
-      error: {
-        code: -32603,
-        message: err instanceof Error ? err.message : String(err),
-      },
-    });
-  }
+  const response = await dispatchMessage(parsed, handler, writeErr);
+  if (response) writeOut(response);
 }
 
 function findHeaderEnd(buffer: Buffer): { headerEnd: number; bodyStart: number } | null {
