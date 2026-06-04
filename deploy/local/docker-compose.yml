@@ -1,0 +1,36 @@
+# Persistent local agentmemory worker (containerized).
+#
+# Runs THIS repo's build and connects to the iii-engine container started by
+# the repo-root docker-compose.yml (network `agentmemory_default`). With
+# restart: unless-stopped + Docker Desktop set to launch on login, this is an
+# always-on local deployment that survives reboots and session ends.
+#
+#   Bring up:   docker compose -f deploy/local/docker-compose.yml up -d --build
+#   Logs:       docker compose -f deploy/local/docker-compose.yml logs -f
+#   Down:       docker compose -f deploy/local/docker-compose.yml down
+#
+# State (memories, index, graph) lives in the engine's iii-data volume, not
+# here — this worker is stateless and safe to rebuild/recreate.
+services:
+  agentmemory-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/local/Dockerfile
+    container_name: agentmemory-worker
+    environment:
+      # Reach the engine container by its compose network alias.
+      - III_ENGINE_URL=ws://iii-engine:49134
+    volumes:
+      # Read ~/.agentmemory/.env (provider keys, EMBEDDING_PROVIDER) from the
+      # host so secrets stay out of the image/compose, and persist the worker's
+      # local files (images, worker.pid) back to the host. ${USERPROFILE} is
+      # set on Windows; on macOS/Linux use ${HOME} instead.
+      - ${USERPROFILE}/.agentmemory:/root/.agentmemory
+    networks:
+      - engine
+    restart: unless-stopped
+
+networks:
+  engine:
+    name: agentmemory_default
+    external: true
