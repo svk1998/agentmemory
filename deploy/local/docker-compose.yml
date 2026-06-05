@@ -17,17 +17,35 @@ services:
       context: ../..
       dockerfile: deploy/local/Dockerfile
     container_name: agentmemory-worker
+    # Publish the viewer to host loopback ONLY. The viewer binds the
+    # container's 127.0.0.1:3113 (a non-loopback bind would require a
+    # secret), so host:3113 maps to container port 3114 where the socat
+    # sidecar below relays to the viewer's loopback.
+    ports:
+      - "127.0.0.1:3113:3114"
     environment:
       # Reach the engine container by its compose network alias.
       - III_ENGINE_URL=ws://iii-engine:49134
     volumes:
-      # Read ~/.agentmemory/.env (provider keys, EMBEDDING_PROVIDER) from the
-      # host so secrets stay out of the image/compose, and persist the worker's
-      # local files (images, worker.pid) back to the host. ${USERPROFILE} is
-      # set on Windows; on macOS/Linux use ${HOME} instead.
-      - ${USERPROFILE}/.agentmemory:/root/.agentmemory
+      # Read ~/.agentmemory/.env (provider keys, EMBEDDING_PROVIDER, secret)
+      # from the host so secrets stay out of the image/compose, and persist the
+      # worker's local files (images, worker.pid) back to the host.
+      # ${USERPROFILE} is set on Windows; falls back to $HOME on macOS/Linux.
+      - ${USERPROFILE:-$HOME}/.agentmemory:/root/.agentmemory
     networks:
       - engine
+    restart: unless-stopped
+
+  # Loopback forwarder for the viewer. Shares the worker's network namespace
+  # so it can reach the viewer on 127.0.0.1:3113, and listens on port 3114
+  # (which the worker publishes to host loopback). This exposes the dashboard
+  # at http://localhost:3113 on THIS machine only — no auth, no LAN exposure.
+  viewer-forward:
+    image: alpine/socat
+    network_mode: "service:agentmemory-worker"
+    command: ["TCP-LISTEN:3114,fork,reuseaddr", "TCP:127.0.0.1:3113"]
+    depends_on:
+      - agentmemory-worker
     restart: unless-stopped
 
 networks:
