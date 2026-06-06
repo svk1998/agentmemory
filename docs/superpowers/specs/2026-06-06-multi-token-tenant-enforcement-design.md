@@ -190,6 +190,51 @@ loader, 1 `authorize()` helper, an upgrade to `checkAuth`, and filter/stamp
 calls at the read/write touch points. No new endpoints, no database, no breakage
 for current single-secret installs.
 
+## Future extension: branch scope (deferred)
+
+A finer-grained scope nesting under the tenant model: **tenant › project ›
+branch**. Lets feature-branch context stay separate from `main` without losing
+the project's accumulated memory.
+
+### Current state
+
+Branch is **detected but not stored as a scope**:
+- `mem::detect-worktree` / `mem::list-worktrees` / `mem::branch-sessions`
+  (`src/functions/branch-aware.ts`) resolve the current branch live from git and
+  are worktree-aware (a worktree maps back to its `mainRepoRoot`).
+- But `mem::branch-sessions` filters by `projectRoot`/`cwd`
+  (`branch-aware.ts:146-150`), *not* by branch — it surfaces the branch name
+  without partitioning on it.
+- `Session` (`types.ts:1-15`) and `Memory` (`types.ts:~80-105`) have **no
+  `branch` field**. The only `branch` in the schema is on `CommitLink`
+  (`types.ts:20`), linking commits to sessions.
+
+So recall is currently scoped by project/cwd, not branch. "Give me only this
+branch's memories" is not possible today.
+
+### What it requires (small, additive)
+
+1. Add `branch?: string` to `Memory` (and `Session`), captured at write time via
+   the existing `mem::detect-worktree` resolution.
+2. Optional `branch` filter in `mem::search`, plugged into the same post-fetch
+   filter machinery already used for project (`search.ts:368`).
+
+### Recommended model: soft scope with inheritance (NOT hard isolation)
+
+Branches are ephemeral and numerous — hard isolation is the wrong default
+(merged/deleted branches orphan their memories; most knowledge is project-level,
+so hard walls fragment it badly).
+
+- `main`/default branch = the shared base, visible from every branch.
+- A feature branch = an **overlay**: recall prefers (or boosts) current-branch
+  memories *plus* inherits the project/main base.
+- Branch acts as a ranking signal or an opt-in filter (`scope: "branch"`),
+  defaulting to project-wide so context is never silently lost after switching or
+  deleting a branch.
+
+This nests under tenant/project: a token's tenant + project access still gates
+visibility; branch only refines *within* what the principal can already see.
+
 ## Open items to re-confirm before implementation
 
 1. MCP-only enforcement boundary (admin secret stays with operators) —
