@@ -29,3 +29,10 @@ integrations/hermes/__pycache__/
 eval/reports/
 # LongMemEval download is 278MB; fetched on demand
 eval/data/longmemeval/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Office temp/lock files (e.g. ~$deck.pptx)
+~$*
