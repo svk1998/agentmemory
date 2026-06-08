@@ -21,6 +21,7 @@ import { run as runPreTool } from "../src/hooks/cline/pre-tool-use.js";
 import { run as runPostTool } from "../src/hooks/cline/post-tool-use.js";
 import { run as runPrompt } from "../src/hooks/cline/prompt-submit.js";
 import { run as runPreCompact } from "../src/hooks/cline/pre-compact.js";
+import { run as runTaskComplete } from "../src/hooks/cline/task-complete.js";
 import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
@@ -331,6 +332,19 @@ describe("PreCompact run", () => {
     const out = await runPreCompact({ taskId: "t6", workspaceRoots: ["/repo"] }, ctx);
     expect(calls.map((c) => c.path)).toEqual(["/summarize", "/context"]);
     expect(out.contextModification).toBe("SURVIVING CONTEXT");
+    expect(out.cancel).toBe(false);
+  });
+});
+
+describe("TaskComplete run", () => {
+  it("summarizes, ends the session, and fires consolidation detached", async () => {
+    const { ctx, calls } = fakeCtx();
+    const out = await runTaskComplete({ taskId: "t7", workspaceRoots: ["/repo"] }, ctx);
+    const paths = calls.map((c) => c.path);
+    expect(paths).toContain("/summarize");
+    expect(paths).toContain("/session/end");
+    expect(paths).toContain("/consolidate-pipeline");
+    expect(paths).toContain("/crystals/auto");
     expect(out.cancel).toBe(false);
   });
 });
