@@ -17,6 +17,7 @@ import {
 } from "../src/hooks/cline/_cline.js";
 import { run as runTaskStart } from "../src/hooks/cline/task-start.js";
 import { run as runTaskResume } from "../src/hooks/cline/task-resume.js";
+import { run as runPreTool } from "../src/hooks/cline/pre-tool-use.js";
 import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
@@ -237,6 +238,30 @@ describe("TaskResume run", () => {
   it("returns empty non-cancelling output when context is unavailable", async () => {
     const { ctx } = fakeCtx();
     const out = await runTaskResume({ taskId: "t2", workspaceRoots: ["/repo"] }, ctx);
+    expect(out).toEqual({ cancel: false, contextModification: "", errorMessage: "" });
+  });
+});
+
+describe("PreToolUse run", () => {
+  it("enriches with file history and injects it, never cancelling", async () => {
+    const { ctx, calls } = fakeCtx({ "/enrich": { context: "FILE PITFALLS" } });
+    const out = await runPreTool(
+      { taskId: "t3", workspaceRoots: ["/repo"], tool: "write_to_file", parameters: { path: "a.ts" } },
+      ctx,
+    );
+    expect(calls[0].path).toBe("/enrich");
+    expect((calls[0].body as Record<string, unknown>).files).toEqual(["a.ts"]);
+    expect(out.contextModification).toBe("FILE PITFALLS");
+    expect(out.cancel).toBe(false);
+  });
+
+  it("no-ops (no network) when the tool has no file paths", async () => {
+    const { ctx, calls } = fakeCtx();
+    const out = await runPreTool(
+      { taskId: "t3", workspaceRoots: ["/repo"], tool: "ask_followup_question", parameters: { question: "?" } },
+      ctx,
+    );
+    expect(calls).toHaveLength(0);
     expect(out).toEqual({ cancel: false, contextModification: "", errorMessage: "" });
   });
 });
