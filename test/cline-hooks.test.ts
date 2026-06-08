@@ -20,6 +20,7 @@ import { run as runTaskResume } from "../src/hooks/cline/task-resume.js";
 import { run as runPreTool } from "../src/hooks/cline/pre-tool-use.js";
 import { run as runPostTool } from "../src/hooks/cline/post-tool-use.js";
 import { run as runPrompt } from "../src/hooks/cline/prompt-submit.js";
+import { run as runPreCompact } from "../src/hooks/cline/pre-compact.js";
 import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
@@ -321,5 +322,15 @@ describe("UserPromptSubmit run", () => {
     );
     expect(calls.map((c) => c.path)).toEqual(["/observe", "/smart-search"]);
     expect(out.contextModification).toContain("[bug] 401 on hooks");
+  });
+});
+
+describe("PreCompact run", () => {
+  it("summarizes then injects fresh context to survive compaction", async () => {
+    const { ctx, calls } = fakeCtx({ "/context": { context: "SURVIVING CONTEXT" } });
+    const out = await runPreCompact({ taskId: "t6", workspaceRoots: ["/repo"] }, ctx);
+    expect(calls.map((c) => c.path)).toEqual(["/summarize", "/context"]);
+    expect(out.contextModification).toBe("SURVIVING CONTEXT");
+    expect(out.cancel).toBe(false);
   });
 });
