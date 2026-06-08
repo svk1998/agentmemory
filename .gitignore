@@ -12,6 +12,8 @@ dist/
 
 plugin/scripts/*.map
 plugin/scripts/*.d.mts
+plugin/cline/scripts/*.map
+plugin/cline/scripts/*.d.mts
 data/
 !eval/data/
 !eval/data/**
