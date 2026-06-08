@@ -15,6 +15,8 @@ import {
   contextString,
   type Config,
 } from "../src/hooks/cline/_cline.js";
+import { run as runTaskStart } from "../src/hooks/cline/task-start.js";
+import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
   it("attaches Bearer header when a secret is present", () => {
@@ -185,5 +187,39 @@ describe("contextString", () => {
     expect(contextString(null)).toBe("");
     expect(contextString({})).toBe("");
     expect(contextString({ context: 123 })).toBe("");
+  });
+});
+
+function fakeCtx(overrides: Partial<Record<string, unknown>> = {}) {
+  const calls: Array<{ path: string; body: unknown }> = [];
+  const ctx: Ctx = {
+    cfg: { url: "http://x", secret: "t" },
+    post: async (path, body) => {
+      calls.push({ path, body });
+      return (overrides[path] as Record<string, unknown>) ?? null;
+    },
+    postDetached: (path, body) => {
+      calls.push({ path, body });
+    },
+  };
+  return { ctx, calls };
+}
+
+describe("TaskStart run", () => {
+  it("registers the session and injects returned context + instructions", async () => {
+    const { ctx, calls } = fakeCtx({ "/session/start": { context: "PAST CONTEXT" } });
+    const out = await runTaskStart({ taskId: "t1", workspaceRoots: ["/repo"] }, ctx);
+    expect(calls[0].path).toBe("/session/start");
+    expect((calls[0].body as Record<string, unknown>).sessionId).toBe("t1");
+    expect(out.cancel).toBe(false);
+    expect(out.contextModification).toContain("PAST CONTEXT");
+    expect(out.contextModification).toContain("agentmemory");
+  });
+
+  it("still returns instructions (non-cancelling) when the server is down", async () => {
+    const { ctx } = fakeCtx(); // /session/start → null
+    const out = await runTaskStart({ taskId: "t1", workspaceRoots: ["/repo"] }, ctx);
+    expect(out.cancel).toBe(false);
+    expect(out.contextModification).toContain("agentmemory");
   });
 });
