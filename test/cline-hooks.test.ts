@@ -19,6 +19,7 @@ import { run as runTaskStart } from "../src/hooks/cline/task-start.js";
 import { run as runTaskResume } from "../src/hooks/cline/task-resume.js";
 import { run as runPreTool } from "../src/hooks/cline/pre-tool-use.js";
 import { run as runPostTool } from "../src/hooks/cline/post-tool-use.js";
+import { run as runPrompt } from "../src/hooks/cline/prompt-submit.js";
 import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
@@ -289,5 +290,36 @@ describe("PostToolUse run", () => {
       ctx,
     );
     expect((calls[0].body as Record<string, unknown>).hookType).toBe("post_tool_failure");
+  });
+});
+
+describe("UserPromptSubmit run", () => {
+  it("observes the prompt and does not inject by default", async () => {
+    const { ctx, calls } = fakeCtx();
+    const out = await runPrompt(
+      { taskId: "t5", workspaceRoots: ["/repo"], prompt: "fix the auth bug", attachments: [] },
+      ctx,
+      false, // injectOnPrompt
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].path).toBe("/observe");
+    expect((calls[0].body as Record<string, unknown>).hookType).toBe("prompt_submit");
+    expect(out.contextModification).toBe("");
+  });
+
+  it("injects rendered smart-search results when enabled", async () => {
+    const { ctx, calls } = fakeCtx({
+      "/smart-search": {
+        mode: "compact",
+        results: [{ title: "401 on hooks", type: "bug", obsId: "1", sessionId: "s", score: 1, timestamp: "t" }],
+      },
+    });
+    const out = await runPrompt(
+      { taskId: "t5", workspaceRoots: ["/repo"], prompt: "auth bug" },
+      ctx,
+      true,
+    );
+    expect(calls.map((c) => c.path)).toEqual(["/observe", "/smart-search"]);
+    expect(out.contextModification).toContain("[bug] 401 on hooks");
   });
 });
