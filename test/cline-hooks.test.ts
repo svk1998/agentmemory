@@ -18,6 +18,7 @@ import {
 import { run as runTaskStart } from "../src/hooks/cline/task-start.js";
 import { run as runTaskResume } from "../src/hooks/cline/task-resume.js";
 import { run as runPreTool } from "../src/hooks/cline/pre-tool-use.js";
+import { run as runPostTool } from "../src/hooks/cline/post-tool-use.js";
 import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
@@ -263,5 +264,30 @@ describe("PreToolUse run", () => {
     );
     expect(calls).toHaveLength(0);
     expect(out).toEqual({ cancel: false, contextModification: "", errorMessage: "" });
+  });
+});
+
+describe("PostToolUse run", () => {
+  it("observes a successful tool call with timing", async () => {
+    const { ctx, calls } = fakeCtx();
+    const out = await runPostTool(
+      { taskId: "t4", workspaceRoots: ["/repo"], tool: "read_file",
+        parameters: { path: "a.ts" }, result: "ok", success: true, durationMs: 12 },
+      ctx,
+    );
+    expect(calls[0].path).toBe("/observe");
+    const body = calls[0].body as Record<string, unknown>;
+    expect(body.hookType).toBe("post_tool_use");
+    expect((body.data as Record<string, unknown>).duration_ms).toBe(12);
+    expect(out.cancel).toBe(false);
+  });
+
+  it("routes failures to post_tool_failure", async () => {
+    const { ctx, calls } = fakeCtx();
+    await runPostTool(
+      { taskId: "t4", workspaceRoots: ["/repo"], tool: "execute_command", result: "boom", success: false },
+      ctx,
+    );
+    expect((calls[0].body as Record<string, unknown>).hookType).toBe("post_tool_failure");
   });
 });
