@@ -22,6 +22,7 @@ import { run as runPostTool } from "../src/hooks/cline/post-tool-use.js";
 import { run as runPrompt } from "../src/hooks/cline/prompt-submit.js";
 import { run as runPreCompact } from "../src/hooks/cline/pre-compact.js";
 import { run as runTaskComplete } from "../src/hooks/cline/task-complete.js";
+import { run as runTaskCancel } from "../src/hooks/cline/task-cancel.js";
 import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
@@ -345,6 +346,18 @@ describe("TaskComplete run", () => {
     expect(paths).toContain("/session/end");
     expect(paths).toContain("/consolidate-pipeline");
     expect(paths).toContain("/crystals/auto");
+    expect(out.cancel).toBe(false);
+  });
+});
+
+describe("TaskCancel run", () => {
+  it("observes the cancel and ends the session without consolidating", async () => {
+    const { ctx, calls } = fakeCtx();
+    const out = await runTaskCancel({ taskId: "t8", workspaceRoots: ["/repo"] }, ctx);
+    const paths = calls.map((c) => c.path);
+    expect(paths).toContain("/observe");
+    expect(paths).toContain("/session/end");
+    expect(paths).not.toContain("/consolidate-pipeline");
     expect(out.cancel).toBe(false);
   });
 });
