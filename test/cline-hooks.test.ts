@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,8 @@ import {
   extractFilePaths,
   renderSearchResults,
   post,
+  truncate,
+  contextString,
   type Config,
 } from "../src/hooks/cline/_cline.js";
 
@@ -127,5 +129,61 @@ describe("buildOutput always safe", () => {
   });
   it("ignores any cancel passed in", () => {
     expect(buildOutput({ cancel: true } as never).cancel).toBe(false);
+  });
+});
+
+describe("resolveConfig mixed env + file", () => {
+  const OLD = { ...process.env };
+  afterEach(() => {
+    process.env = { ...OLD };
+  });
+
+  it("takes url from env and secret from config.json", () => {
+    process.env.AGENTMEMORY_URL = "http://env-url:1";
+    delete process.env.AGENTMEMORY_SECRET;
+    const dir = mkdtempSync(join(tmpdir(), "cline-cfg-mix-"));
+    try {
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({ url: "http://file-url:2", secret: "filesecret" }),
+      );
+      // env url wins; secret falls back to the file
+      expect(resolveConfig(dir)).toEqual({ url: "http://env-url:1", secret: "filesecret" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("truncate", () => {
+  it("returns short strings unchanged", () => {
+    expect(truncate("hi", 10)).toBe("hi");
+  });
+  it("truncates long strings with the newline suffix", () => {
+    expect(truncate("abcdef", 3)).toBe("abc\n[...truncated]");
+  });
+  it("returns small objects unchanged", () => {
+    const obj = { a: 1 };
+    expect(truncate(obj, 100)).toBe(obj);
+  });
+  it("truncates oversized objects to a string with the object suffix", () => {
+    const out = truncate({ a: "xxxxxxxxxx" }, 5);
+    expect(typeof out).toBe("string");
+    expect(out as string).toContain("...[truncated]");
+  });
+  it("passes through non-string/non-object values", () => {
+    expect(truncate(42, 5)).toBe(42);
+    expect(truncate(null, 5)).toBe(null);
+  });
+});
+
+describe("contextString", () => {
+  it("returns the context field when present and a string", () => {
+    expect(contextString({ context: "hello" })).toBe("hello");
+  });
+  it("returns empty string for null or missing/non-string context", () => {
+    expect(contextString(null)).toBe("");
+    expect(contextString({})).toBe("");
+    expect(contextString({ context: 123 })).toBe("");
   });
 });

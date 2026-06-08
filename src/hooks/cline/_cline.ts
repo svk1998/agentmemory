@@ -137,6 +137,8 @@ export async function readInput(): Promise<HookInput | null> {
   }
 }
 
+// Each hook runs as a one-shot `node <hook>.mjs` process that emits exactly
+// once and exits, so a module-level guard is the correct scope here.
 let emitted = false;
 export function emit(partial: Partial<HookOutput> = {}): void {
   if (emitted) return;
