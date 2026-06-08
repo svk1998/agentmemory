@@ -16,6 +16,7 @@ import {
   type Config,
 } from "../src/hooks/cline/_cline.js";
 import { run as runTaskStart } from "../src/hooks/cline/task-start.js";
+import { run as runTaskResume } from "../src/hooks/cline/task-resume.js";
 import type { Ctx } from "../src/hooks/cline/_cline.js";
 
 describe("authHeaders", () => {
@@ -221,5 +222,21 @@ describe("TaskStart run", () => {
     const out = await runTaskStart({ taskId: "t1", workspaceRoots: ["/repo"] }, ctx);
     expect(out.cancel).toBe(false);
     expect(out.contextModification).toContain("agentmemory");
+  });
+});
+
+describe("TaskResume run", () => {
+  it("re-registers the session then injects /context", async () => {
+    const { ctx, calls } = fakeCtx({ "/context": { context: "RESUMED CONTEXT" } });
+    const out = await runTaskResume({ taskId: "t2", workspaceRoots: ["/repo"] }, ctx);
+    expect(calls.map((c) => c.path)).toEqual(["/session/start", "/context"]);
+    expect(out.contextModification).toBe("RESUMED CONTEXT");
+    expect(out.cancel).toBe(false);
+  });
+
+  it("returns empty non-cancelling output when context is unavailable", async () => {
+    const { ctx } = fakeCtx();
+    const out = await runTaskResume({ taskId: "t2", workspaceRoots: ["/repo"] }, ctx);
+    expect(out).toEqual({ cancel: false, contextModification: "", errorMessage: "" });
   });
 });
