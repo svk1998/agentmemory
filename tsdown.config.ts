@@ -16,6 +16,17 @@ const hookEntries = [
   "src/hooks/post-commit.ts",
 ];
 
+const clineHookEntries = [
+  "src/hooks/cline/task-start.ts",
+  "src/hooks/cline/task-resume.ts",
+  "src/hooks/cline/task-cancel.ts",
+  "src/hooks/cline/task-complete.ts",
+  "src/hooks/cline/pre-tool-use.ts",
+  "src/hooks/cline/post-tool-use.ts",
+  "src/hooks/cline/prompt-submit.ts",
+  "src/hooks/cline/pre-compact.ts",
+];
+
 const shared = {
   format: ["esm"] as const,
   target: "node20" as const,
@@ -73,6 +84,13 @@ export default defineConfig([
   ...hookEntries.map((entry) => ({
     entry: [entry],
     outDir: "plugin/scripts",
+    ...shared,
+    clean: false,
+    sourcemap: false,
+  })),
+  ...clineHookEntries.map((entry) => ({
+    entry: [entry],
+    outDir: "plugin/cline/scripts",
     ...shared,
     clean: false,
     sourcemap: false,
